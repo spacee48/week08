@@ -1,8 +1,17 @@
 name: CI - Build & Test
 on:
+  workflow_dispatch: 
+  push:
+    branches: [ main, dev ]
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - '.github/workflows/ci.yml'
   pull_request:
     branches: [ main, dev ]
-    paths: [ "backend/**", "frontend/**" ]
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
 
 jobs:
   backend:
