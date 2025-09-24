@@ -1,0 +1,89 @@
+name: Reusable - Deploy Single Backend Service
+
+on:
+  workflow_call:
+    inputs:
+      service:
+        required: true
+        type: string
+      aks_cluster_name:
+        required: true
+        type: string
+      aks_resource_group:
+        required: true
+        type: string
+      aks_acr_name:
+        required: true
+        type: string
+    secrets:
+      AZURE_CLIENT_ID:
+        required: true
+      AZURE_TENANT_ID:
+        required: true
+      AZURE_SUBSCRIPTION_ID:
+        required: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: Production
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set Kubernetes context (get AKS credentials)
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ inputs.aks_resource_group }} \
+            --name ${{ inputs.aks_cluster_name }} \
+            --overwrite-existing
+
+      - name: Attach ACR
+        run: |
+          az aks update \
+            --name ${{ inputs.aks_cluster_name }} \
+            --resource-group ${{ inputs.aks_resource_group }} \
+            --attach-acr ${{ inputs.aks_acr_name }}
+
+      - name: Deploy Infrastructure (only once, for product service)
+        if: ${{ inputs.service == 'product' }}
+        run: |
+          echo "Deploying backend infrastructure..."
+          cd k8s/
+          kubectl apply -f configmaps.yaml
+          kubectl apply -f secrets.yaml
+          kubectl apply -f product-db.yaml
+          kubectl apply -f order-db.yaml
+
+      - name: Deploy ${{ inputs.service }} microservice
+        run: |
+          cd k8s/
+          kubectl apply -f ${{ inputs.service }}-service.yaml
+
+      - name: Wait for LoadBalancer IP
+        id: get_ip
+        run: |
+          echo "Waiting for ${{ inputs.service }} LoadBalancer IP..."
+          IP=""
+          for i in {1..60}; do
+            IP=$(kubectl get svc ${{ inputs.service }}-service-w08e1 -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || true)
+            if [[ -n "$IP" ]]; then
+              echo "IP=$IP" >> $GITHUB_ENV
+              echo "external_ip=$IP" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Error: ${{ inputs.service }} LoadBalancer IP not assigned after timeout."
+          exit 1

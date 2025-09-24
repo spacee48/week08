@@ -1,0 +1,29 @@
+name: CI - Build & Test
+on:
+  pull_request:
+    branches: [ main, dev ]
+    paths: [ "backend/**", "frontend/**" ]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    strategy: { matrix: { service: [ product, order ] } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: |
+          cd backend/${{ matrix.service }}
+          npm ci
+          npm test --if-present
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: |
+          cd frontend
+          npm ci
+          npm test --if-present
