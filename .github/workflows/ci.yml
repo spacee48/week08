@@ -1,6 +1,7 @@
 name: CI - Build & Test
+
 on:
-  workflow_dispatch: 
+  workflow_dispatch:
   push:
     branches: [ main, dev ]
     paths:
@@ -15,24 +16,67 @@ on:
 
 jobs:
   backend:
+    name: backend (${{ matrix.service }})
     runs-on: ubuntu-latest
-    strategy: { matrix: { service: [ product, order ] } }
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: product_service
+            db_port: 5432
+            db_name: products
+          - service: order_service
+            db_port: 5433
+            db_name: orders
+
+    services:
+      db:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ${{ matrix.db_name }}
+        ports:
+          - ${{ matrix.db_port }}:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - run: |
-          cd backend/${{ matrix.service }}
-          npm ci
-          npm test --if-present
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install deps
+        run: |
+          pip install --upgrade pip
+          pip install -r backend/${{ matrix.service }}/requirements.txt
+          pip install pytest httpx
+
+      - name: Run tests (skip if none)
+        working-directory: backend/${{ matrix.service }}
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: ${{ matrix.db_port }}
+          POSTGRES_DB: ${{ matrix.db_name }}
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        run: |
+          if [ -d tests ]; then
+            pytest tests --maxfail=1 --disable-warnings -q
+          else
+            echo "No tests/ folder found for ${{ matrix.service }} — skipping."
+          fi
 
   frontend:
+    name: frontend
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - run: |
-          cd frontend
-          npm ci
-          npm test --if-present
+
+      - name: Build frontend image
+        run: docker build -t frontend:ci ./frontend
